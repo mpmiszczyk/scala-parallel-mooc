@@ -1,0 +1,233 @@
+* Parallel programming
+** Week 1
+*** Introduction to parallel computing
+**** Parallelism Granularity
+***** bit-level
+***** instruction-level
+From _same instruction stream_
+#+BEGIN_SRC
+c = a + b
+d = a - b
+e = c + d
+#+END_SRC
+~c~ and ~d~ can be calculated at the same time
+***** task-level
+Separate instruction streams
+*** JVM parallelism
+**** Process
+***** OS multitasking
+***** time-slice
+***** Can communicate trough Pipes
+**** Thread
+***** started by given process
+***** Shared process memory 
+***** Non-shared stacks
+Not able to modify stack-memory of different thread
+***** Start new thread with
+****** Define ~Thread~ subclass
+****** Instantiate and ~new Thread~ object
+****** Call ~start~ on ~Thread~ object
+****** Call ~join~ to wait for ~Thread~ finish execution
+****** Example
+#+BEGIN_SRC Scala
+class HelloThread extends Thread {
+  override def run = {
+    prinln("Hello, world!")
+  }
+}
+
+val thread = new HelloThread
+
+thread.start()
+thread.join() 
+#+END_SRC
+**** Atomicity
+When one sequence of statements can not overlap with other thread.
+
+We can use simple counter as example:
+#+BEGIN_SRC scala
+private var uidCount = 0L
+def getUniqueID : Long ={
+  uidCount = uidCount + 1
+  uidCount
+}
+#+END_SRC
+
+Since this method is not atomic (two distinct operations of read and
+write), when run in multiple thread it can return wrong results (you
+could loose some "counts").
+
+This can be solved with ~synchronized~ block (from Java), witch uses
+/monitor/ to manage execution of given method.
+
+#+BEGIN_SRC scala
+private val x = new AnyRef {} // monitor
+private var uidCount = 0L
+def getUniqueID: Long = x.synchronized { // added synchronization
+  uidCount = uidCount + 1
+  uidCount
+}
+#+END_SRC
+
+***** Composition with the synchronized block
+
+Invocations of the synchronized block can nest:
+#+BEGIN_SRC scala
+x.synchronized {
+  y.synchronized {
+  ....
+  }
+}
+#+END_SRC
+
+#+BEGIN_SRC scala
+class Account(private var amount: Long = 0) {
+
+  def transfer(toTarget: Account, value: Long) = {
+    this.synchronized {
+      toTarget.synchronized {
+        this.amount -= value
+        toTarget.amount += value
+      }
+    }
+  }
+}
+
+
+#+END_SRC
+With such implementation thread first obtains monitor on first
+~Account~ object, than obtains monitor on second ~Account~ object, and
+after that he [thread] executes sequence [block].
+
+This example creates obvious /Deadlock/.
+
+***** Resolving deadlock
+
+****** block in ordered fashion
+
+Acquire monitors based for example on some ~getUniqueUid()~
+
+****  Memory model
+
+- Two threads writing o separate location in memory do not need
+  synchronization
+- A thread ~X~ that calls ~join~ on another thread ~Y~ is guaranteed
+  to observe all the writes by thread ~Y~ after ~join~ returns.
+
+**** Example: p-norm
+
+***** Execute in parallel
+
+Just an idea. ~parallel~ is not part of Scala library.
+#+BEGIN_SRC scala
+def parallel[A,B](taskA: => A, taksB: => B): (A,B) = {...}
+
+val (sum1, sum2) = parallel(segmentRec(a,p,s,m),
+                            segmentRec(a,p,m,t))
+#+END_SRC
+
+~parallel~ take it's parameters by name, of course.
+
+**** Monte Carlo
+
+**** First Class Task
+
+More general idea of ~task~ that will take some sequence, run it in
+parallel and then return it's value when ~join~ is called on task
+object.
+
+#+BEGIN_QUOTE
+Is it simply a Future?  It does look like one.
+#+END_QUOTE
+
+#+BEGIN_SRC scala
+def task(c: => A): Taks[A]
+
+trait Task[A] {
+  def join: A
+}
+#+END_SRC
+
+Is should behave like ~task(e).join == e~.
+
+***** Implicit conversion
+
+#+BEGIN_SRC scala
+implicit def getJoin[A](x: Task[A]): A = x.join
+#+END_SRC
+
+Thanks to this we can crate new ~Task[A]~, and pass it around as abject,
+and as soon someone expects type ~A~ it will be converted with
+~x.join~.  So we wait with blocking join until we need this value.
+But one need to be careful, since most of passing around is done by
+~A~ type, so with first function call we might expect ~join~ and
+block.  This makes refactoring much harder.
+
+*** Parallel performance analysis
+
+*** Benchmarking Parallel Programs
+
+In contrast to testing Benchmarking returns continuous value.  Not
+just binary works/does not work, but rather extent to which program is
+correct.  This "continuation" is three-fold.  First of all, in manner of
+value we receive, like eleven seconds.  Second of all, it makes more
+sense as a series of values dependent on input (size of it).  And
+finally it makes more sense presented as sequence of runs by
+constantly evolving program.
+
+**** Performance Factors
+
+- processor speed
+- number of processors
+- memory access latency and throughput
+- cache behaviour
+- runtime behaviour (GC, JIT, scheduling)
+
+**** Measurement Methodologies
+
+- multiple repetitions
+- statistical treatment (mean & variance)
+- eliminating outliers
+- ensuring steady state (warm-up, clear system)
+- preventing anomalies (GC by enough memory, JIT disabled, warm-up)
+
+  #+BEGIN_QUOTE
+  Regarding outliers, one thinks about ~xprof~ and it's outliers
+  approach.  Live system access is somewhat a must.
+  #+END_QUOTE
+
+**** ScalaMeter
+ - performance regression testing
+ - benchmarking
+
+***** How-To: 
+
+****** add as plugin to project
+
+#+BEGIN_SRC scala
+libraryDependencies +=
+   "com.storm-enrout" %% "scalameter-core" % "0.6"
+#+END_SRC
+
+****** write your suites
+
+#+BEGIN_SRC scala
+import org.scalameter._
+
+val time = measure {
+  (0 until 10000000).toArray
+}
+
+prinln(s"Array initialization time: $time ms")
+#+END_SRC
+
+****** find steady state with ~Warmer~ objects
+
+#+BEGIN_SRC scala
+import org.scalameter._
+
+val time = withWarmer(new Warmer.Default) measure {
+  (0 until 10000000).toArray
+}
+#+END_SRC
+ 
